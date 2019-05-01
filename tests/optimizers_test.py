@@ -22,9 +22,10 @@ import functools
 from absl.testing import absltest
 import jax.numpy as np
 import jax.test_util as jtu
-from jax import jit, grad, tree_util
+from jax import jit, grad
+from jax import core, tree_util
 from jax.experimental import optimizers
-from jax.lib import xla_bridge as xla
+from jax.interpreters import xla
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -93,6 +94,14 @@ class OptimizerTests(jtu.JaxTestCase):
   def testMomentumVector(self):
     def loss(x, _): return np.dot(x, x)
     x0 = np.ones(2)
+    num_iters = 100
+    step_size = 0.1
+    mass = 0.
+    self._CheckOptimizer(optimizers.momentum, loss, x0, num_iters, step_size, mass)
+
+  def testMomentumDict(self):
+    def loss(dct, _): return np.dot(dct['x'], dct['x'])
+    x0 = {'x': np.ones(2)}
     num_iters = 100
     step_size = 0.1
     mass = 0.
@@ -169,6 +178,31 @@ class OptimizerTests(jtu.JaxTestCase):
       return update_fun(0, g, opt_state)
 
     update(opt_state, 0.9)  # doesn't crash
+
+  def testDeviceTupleState(self):
+    init_fun, update_fun, _ = optimizers.sgd(0.1)
+    opt_state = init_fun(np.zeros(3))
+    self.assertIsInstance(opt_state, optimizers.OptimizerState)
+    self.assertIsInstance(opt_state.packed_state, core.JaxTuple)
+    opt_state = jit(update_fun)(0, np.zeros(3), opt_state)
+    self.assertIsInstance(opt_state, optimizers.OptimizerState)
+    self.assertIsInstance(opt_state.packed_state, xla.DeviceTuple)
+
+  def testUpdateFunStructureMismatchErrorMessage(self):
+    @optimizers.optimizer
+    def opt_maker():
+      def init_fun(x0):
+        return {'x': x0}
+      def update_fun(i, g, opt_state):
+        x = opt_state['x']
+        return {'x': x - 0.1 * g, 'v': g}  # bug!
+      def get_params(opt_state):
+        return opt_state['x']
+      return init_fun, update_fun, get_params
+
+    init_fun, update_fun, get_params = opt_maker()
+    opt_state = init_fun(np.zeros(3))
+    self.assertRaises(TypeError, lambda: update_fun(opt_state))
 
 
 if __name__ == '__main__':
