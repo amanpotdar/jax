@@ -64,7 +64,7 @@ flags.DEFINE_bool("jax_disable_jit",
                   "Disable JIT compilation and just call original Python.")
 
 
-def jit(fun, static_argnums=()):
+def jit(fun, static_argnums=(), device_values=True):
   """Sets up `fun` for just-in-time compilation with XLA.
 
   Args:
@@ -76,12 +76,14 @@ def jit(fun, static_argnums=()):
       provided they are hashable and have an equality operation defined. Static
       arguments are included as part of a compilation cache key, which is why
       hash and equality operators must be defined.
-    static_argnums: A tuple of ints. Specifies which positional arguments to
+    static_argnums: A tuple of ints specifying which positional arguments to
       treat as static (compile-time constant). Operations that only depend on
       static arguments will be constant-folded. Calling the jitted function with
       different values for these constants will trigger recompilation. If the
       jitted function is called with fewer positional arguments than indicated
-      by `static_argnums` then an error is raised.
+      by `static_argnums` then an error is raised. Defaults to ().
+    device_values: A boolean specifying whether the jitted function should, when
+      called, return values backed by device memory (default True).
 
   Returns:
     A wrapped version of `fun`, set up for just-in-time compilation.
@@ -122,7 +124,8 @@ def jit(fun, static_argnums=()):
     jaxtuple_kwargs, kwargs_tree = pytree_to_jaxtupletree(kwargs)
     _check_args(jaxtuple_args)
     jaxtree_fun, out_tree = pytree_fun_to_jaxtupletree_fun2(f, kwargs_tree, in_trees)
-    out = xla.xla_call(jaxtree_fun, jaxtuple_kwargs, *jaxtuple_args)
+    out = xla.xla_call(jaxtree_fun, jaxtuple_kwargs, *jaxtuple_args,
+                       device_values=device_values)
     return build_tree(out_tree(), out)
 
   jitted_name =  "jit({}, static_argnums={})"
@@ -800,12 +803,7 @@ tree_to_pval_tuples = partial(process_pytree, pe.pack_pvals)
 
 
 device_put = jit(lambda x: x)
-_device_get_array = lambda x: x.copy() if type(x) is xla.DeviceArray else x
-device_get = partial(tree_map, _device_get_array)
-
-_replicate_array = lambda x: onp.broadcast_to(x, (device_count(),) + onp.shape(x))
-replicate = partial(tree_map, _replicate_array)
-unreplicate = lambda x: tree_map(op.itemgetter(0), x)
+device_get = jit(lambda x: x, device_values=False)
 
 
 def _argnums_partial(f, dyn_argnums, args):
