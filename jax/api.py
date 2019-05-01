@@ -109,14 +109,6 @@ def jit(fun, static_argnums=(), device_values=True):
       msg = ("Jitted function has static_argnums={} but was called with only {}"
              " positional arguments.")
       raise TypeError(msg.format(static_argnums, len(args)))
-    if kwargs:
-      # TODO(mattjj, dougalm): remove warning by May 1 2019
-      msg = ("Until recently jitted functions called with keyword arguments "
-             "treated those arguments as if they were part of static_argnums, "
-             "but now they are treated just like other arguments. If you were "
-             "relying on the previous behavior, you may need to update your "
-             "code to use static_argnums. See the jit docstring.")
-      warn(msg)
     f = lu.wrap_init(fun)
     dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
     f, dyn_args = _argnums_partial(f, dyn_argnums, args)
