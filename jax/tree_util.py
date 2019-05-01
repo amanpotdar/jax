@@ -255,6 +255,9 @@ class NodeType(object):
     self.to_iterable = to_iterable
     self.from_iterable = from_iterable
 
+  def __repr__(self):
+    return self.name
+
 node_types = {}
 
 def register_pytree_node(py_type, to_iterable, from_iterable):

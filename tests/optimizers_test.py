@@ -29,6 +29,9 @@ from jax.lib import xla_bridge as xla
 from jax.config import config
 config.parse_flags_with_absl()
 
+
+dummy_data = None
+
 class OptimizerTests(jtu.JaxTestCase):
 
   def _CheckOptimizer(self, optimizer, loss, x0, num_steps, *args, **kwargs):
@@ -39,29 +42,30 @@ class OptimizerTests(jtu.JaxTestCase):
     init_fun, update_fun, get_params_fun = optimizer(*args)
     opt_state = init_fun(x0)
     self.assertAllClose(x0, get_params_fun(opt_state), check_dtypes=True)
-    opt_state2 = update_fun(0, grad(loss)(x0, None), opt_state)  # doesn't crash
+    opt_state2 = update_fun(0, grad(loss)(x0, dummy_data), opt_state)  # doesn't crash
     self.assertEqual(tree_util.tree_structure(opt_state),
                      tree_util.tree_structure(opt_state2))
 
   @jtu.skip_on_devices('gpu')
   def _CheckRun(self, optimizer, loss, x0, num_steps, *args, **kwargs):
-    return # TODO(mattjj): bring back fax!
-    # num_repl = xla.get_replica_count()
-    # infeeder = fax.make_infeed_from_sequence(
-    #     [np.ones(1, dtype='float32')] * num_steps * num_repl,
-    #     with_pyvals=True)
+    init_fun, update_fun, get_params_fun = optimizer(*args)
 
-    # def op(infeed, x0):
-    #   opt_init, opt_update = optimizer(*args, **kwargs)
-    #   return optimizers.run_optimizer(loss, infeed, opt_update, opt_init(x0))
-    # cop = jit(op)
+    opt_state = init_fun(x0)
+    for i in range(num_steps):
+      x = get_params_fun(opt_state)
+      g = grad(loss)(x, dummy_data)
+      opt_state = update_fun(i, g, opt_state)
+    xstar = get_params_fun(opt_state)
+    self.assertLess(loss(xstar, dummy_data), 1e-2)
 
-    # a1, _ = op(infeeder(), x0)
-    # a2, _ = cop(infeeder(), x0)
-
-    # assert loss(a1, None) < 1e-3
-    # assert loss(a2, None) < 1e-3
-    # self.assertAllClose(a1, a2, check_dtypes=False)
+    update_fun_jitted = jit(update_fun)
+    opt_state = init_fun(x0)
+    for i in range(num_steps):
+      x = get_params_fun(opt_state)
+      g = grad(loss)(x, dummy_data)
+      opt_state = update_fun_jitted(i, g, opt_state)
+    xstar = get_params_fun(opt_state)
+    self.assertLess(loss(xstar, dummy_data), 1e-2)
 
   def testSgdScalar(self):
     def loss(x, _): return x**2
@@ -121,43 +125,37 @@ class OptimizerTests(jtu.JaxTestCase):
   def testSgdVectorExponentialDecaySchedule(self):
     def loss(x, _): return np.dot(x, x)
     x0 = np.ones(2)
-    num_iters = 100
     step_schedule = optimizers.exponential_decay(0.1, 3, 2.)
-    self._CheckOptimizer(optimizers.sgd, loss, x0, num_iters, step_schedule)
+    self._CheckFuns(optimizers.sgd, loss, x0, step_schedule)
 
   def testSgdVectorInverseTimeDecaySchedule(self):
     def loss(x, _): return np.dot(x, x)
     x0 = np.ones(2)
-    num_iters = 100
     step_schedule = optimizers.inverse_time_decay(0.1, 3, 2.)
-    self._CheckOptimizer(optimizers.sgd, loss, x0, num_iters, step_schedule)
+    self._CheckFuns(optimizers.sgd, loss, x0, step_schedule)
 
   def testAdamVectorInverseTimeDecaySchedule(self):
     def loss(x, _): return np.dot(x, x)
     x0 = np.ones(2)
-    num_iters = 100
     step_schedule = optimizers.inverse_time_decay(0.1, 3, 2.)
-    self._CheckOptimizer(optimizers.adam, loss, x0, num_iters, step_schedule)
+    self._CheckFuns(optimizers.adam, loss, x0, step_schedule)
 
   def testMomentumVectorInverseTimeDecayStaircaseSchedule(self):
     def loss(x, _): return np.dot(x, x)
     x0 = np.ones(2)
-    num_iters = 100
     step_sched = optimizers.inverse_time_decay(0.1, 3, 2., staircase=True)
     mass = 0.9
-    self._CheckOptimizer(optimizers.momentum, loss, x0, num_iters, step_sched, mass)
+    self._CheckFuns(optimizers.momentum, loss, x0, step_sched, mass)
 
   def testRmspropVectorPiecewiseConstantSchedule(self):
     def loss(x, _): return np.dot(x, x)
     x0 = np.ones(2)
-    num_iters = 100
     step_schedule = optimizers.piecewise_constant([25, 75], [1.0, 0.5, 0.1])
-    self._CheckOptimizer(optimizers.rmsprop, loss, x0, num_iters, step_schedule)
+    self._CheckFuns(optimizers.rmsprop, loss, x0, step_schedule)
 
   def testTracedStepSize(self):
     def loss(x, _): return np.dot(x, x)
     x0 = np.ones(2)
-    num_iters = 100
     step_size = 0.1
 
     init_fun, _, _ = optimizers.sgd(step_size)
