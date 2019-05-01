@@ -44,6 +44,7 @@ empty_array_shapes = [(0,), (0, 4), (3, 0),]
 
 scalar_shapes = [jtu.NUMPY_SCALAR_SHAPE]
 array_shapes = nonempty_array_shapes + empty_array_shapes
+nonzerodim_shapes = nonempty_nonscalar_array_shapes + empty_array_shapes
 nonempty_shapes = scalar_shapes + nonempty_array_shapes
 all_shapes =  scalar_shapes + array_shapes
 
@@ -94,6 +95,7 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("multiply", 2, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("negative", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("not_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), ["rev"]),
+    op_record("array_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal(), ["rev"]),
     op_record("reciprocal", 1, inexact_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("subtract", 2, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("sin", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
@@ -119,6 +121,7 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("atleast_1d", 1, default_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("atleast_2d", 1, default_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("atleast_3d", 1, default_dtypes, all_shapes, jtu.rand_default(), []),
+    op_record("cbrt", 1, default_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("conjugate", 1, number_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("deg2rad", 1, float_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("divide", 2, number_dtypes, all_shapes, jtu.rand_nonzero(), ["rev"]),
@@ -132,7 +135,6 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("kron", 2, number_dtypes, nonempty_shapes, jtu.rand_default(), []),
     op_record("outer", 2, number_dtypes, all_shapes, jtu.rand_default(), []),
     op_record("imag", 1, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
-    op_record("isclose", 2, all_dtypes, all_shapes, jtu.rand_small_positive(), []),
     op_record("iscomplex", 1, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
     op_record("isreal", 1, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
     op_record("isrealobj", 1, number_dtypes, all_shapes, jtu.rand_some_inf(), []),
@@ -157,6 +159,7 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("transpose", 1, all_dtypes, all_shapes, jtu.rand_default(), ["rev"]),
     op_record("true_divide", 2, all_dtypes, all_shapes, jtu.rand_nonzero(), ["rev"]),
     op_record("where", 3, (onp.float32, onp.int64), all_shapes, jtu.rand_some_zero(), []),
+    op_record("diff", 1, number_dtypes, nonzerodim_shapes, jtu.rand_default(), ["rev"]),
 ]
 
 JAX_BITWISE_OP_RECORDS = [
@@ -229,6 +232,7 @@ JAX_OPERATOR_OVERLOADS = [
 numpy_version = tuple(map(int, onp.version.version.split('.')))
 if numpy_version >= (1, 15):
   JAX_COMPOUND_OP_RECORDS += [
+      op_record("isclose", 2, all_dtypes, all_shapes, jtu.rand_small_positive(), []),
       op_record("gcd", 2, int_dtypes, all_shapes, jtu.rand_default(), []),
       op_record("lcm", 2, int_dtypes, all_shapes, jtu.rand_default(), []),
   ]
@@ -1368,6 +1372,22 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     ans = lnp.reshape(a, (3, 2), order='F')
     expected = onp.reshape(a, (3, 2), order='F')
     self.assertAllClose(ans, expected, check_dtypes=True)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_op={}_dtype={}".format(
+          op, {bool: "bool", int: "int", float: "float"}[dtype]),
+       "dtype": dtype, "op": op}
+      for dtype in [int, float, bool]
+      for op in ["atleast_1d", "atleast_2d", "atleast_3d"]))
+  def testAtLeastNdLiterals(self, dtype, op):
+    # Fixes: https://github.com/google/jax/issues/634
+    onp_fun = lambda arg: getattr(onp, op)(arg)
+    lnp_fun = lambda arg: getattr(lnp, op)(arg)
+    args_maker = lambda: [dtype(2)]
+    self._CheckAgainstNumpy(onp_fun, lnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_fun, args_maker, check_dtypes=True)
+
 
   def testLongLong(self):
     # TODO(phawkins): enable after a Jaxlib update.

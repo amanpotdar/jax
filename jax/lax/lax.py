@@ -12,14 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-`lax` is a library of primitives that underpins libraries such as `jax.numpy`.
-
-Many of the primitives are thin wrappers around equivalent XLA operations,
-described by the `XLA operation semantics
-<https://www.tensorflow.org/xla/operation_semantics>`_ documentation.
-"""
-
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -44,7 +36,7 @@ from .. import linear_util as lu
 from ..config import flags
 from ..core import Primitive
 from ..abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray,
-                               array_types, make_shaped_array)
+                               array_types, make_shaped_array, raise_to_shaped)
 from ..api_util import (pytree_fun_to_jaxtupletree_fun, pytree_to_jaxtupletree,
                         pytree_fun_to_flatjaxtuple_fun, pytree_to_flatjaxtuple)
 from ..interpreters import partial_eval as pe
@@ -1449,6 +1441,9 @@ cos_p = standard_unop(_float | _complex, 'cos')
 ad.defjvp(cos_p, lambda g, x: neg(mul(g, sin(x))))
 
 atan2_p = standard_binop([_float, _float], 'atan2')
+ad.defjvp(atan2_p,
+  lambda g, x, y: _brcast(g, y) * (y / (square(x) + square(y))),
+  lambda g, x, y: _brcast(g, x) * -x / (square(x) + square(y)))
 
 lgamma_p = standard_unop(_float, 'lgamma')
 ad.defjvp(lgamma_p, lambda g, x: mul(g, digamma(x)))
@@ -2541,12 +2536,31 @@ def _dynamic_update_slice_translation_rule(c, operand, update, start_indices,
                                            update_shape):
   return c.DynamicUpdateSlice(operand, update, start_indices)
 
+def _dynamic_update_slice_batching_rule(batched_args, batch_dims, update_shape):
+  # A dynamic update slice is a special case of scatter; we can delegate to the
+  # scatter batching rule.
+  # TODO(phawkins): consider removing dynamic_update_slice entirely and using
+  # scatter always.
+  operand, update, index = batched_args
+  operand_bdims, update_bdims, index_bdims = batch_dims
+  dims = tuple(range(len(update_shape)))
+  dnums = ScatterDimensionNumbers(update_window_dims=dims,
+                                  inserted_window_dims=(),
+                                  scatter_dims_to_operand_dims=dims)
+  return _scatter_batching_rule(
+    scatter,
+    (operand, index, update), (operand_bdims, index_bdims, update_bdims),
+    None, None, dnums, update_shape)
+
+
 dynamic_update_slice_p = standard_primitive(
     _dynamic_update_slice_shape_rule, _dynamic_update_slice_dtype_rule,
     'dynamic_update_slice', _dynamic_update_slice_translation_rule)
 ad.primitive_jvps[dynamic_update_slice_p] = _dynamic_update_slice_jvp
 ad.primitive_transposes[dynamic_update_slice_p] = \
     _dynamic_update_slice_transpose_rule
+batching.primitive_batchers[dynamic_update_slice_p] = \
+    _dynamic_update_slice_batching_rule
 
 
 
@@ -3257,13 +3271,30 @@ def _select_and_scatter_add_translation(
   return c.SelectAndScatter(operand, select, window_dimensions, window_strides,
                             padding, source, zero, scatter)
 
+def _select_and_scatter_add_jvp(
+    primals, tangents, select_prim, window_dimensions, window_strides,
+    padding):
+  source, operand = primals
+  g_source, g_operand = tangents
+  val_out = _select_and_scatter_add(
+      source, operand, select_prim, window_dimensions, window_strides,
+      padding)
+  del g_operand
+  if g_source is ad_util.zero:
+    tangent_out = ad_util.zero
+  else:
+    tangent_out = _select_and_scatter_add(
+        g_source, operand, select_prim, window_dimensions,
+        window_strides, padding)
+  return val_out, tangent_out
+
 def _select_and_scatter_add_transpose(
     t, source, operand, select_prim, window_dimensions, window_strides,
     padding):
   assert source is None and operand is not None
-  result = _select_and_gather_add(t, operand, select_prim, window_dimensions,
-                                  window_strides, padding)
-  return [result, None]
+  source_t = _select_and_gather_add(t, operand, select_prim, window_dimensions,
+                                    window_strides, padding)
+  return [source_t, None]
 
 def _select_and_scatter_add_batch_rule(batched_args, batch_dims, **kwargs):
   source, operand = batched_args
@@ -3300,6 +3331,7 @@ select_and_scatter_add_p = standard_primitive(
     _select_and_scatter_add_translation)
 ad.primitive_transposes[select_and_scatter_add_p] = \
     _select_and_scatter_add_transpose
+ad.primitive_jvps[select_and_scatter_add_p] = _select_and_scatter_add_jvp
 batching.primitive_batchers[select_and_scatter_add_p] = \
     _select_and_scatter_add_batch_rule
 
@@ -3380,6 +3412,23 @@ def _select_and_gather_add_translation(
   out = c.ConvertElementType(out, uint_etype)
   return c.BitcastConvertType(out, etype)
 
+def _select_and_gather_add_jvp(
+    primals, tangents, select_prim, window_dimensions, window_strides,
+    padding):
+  source, operand = primals
+  g_source, g_operand = tangents
+  val_out = _select_and_gather_add(
+      source, operand, select_prim, window_dimensions, window_strides,
+      padding)
+  del g_operand
+  if g_source is ad_util.zero:
+    tangent_out = ad_util.zero
+  else:
+    tangent_out = _select_and_gather_add(
+        g_source, operand, select_prim, window_dimensions,
+        window_strides, padding)
+  return val_out, tangent_out
+
 def _select_and_gather_add_transpose(
     t, tangents, operand, select_prim, window_dimensions, window_strides,
     padding):
@@ -3391,6 +3440,7 @@ def _select_and_gather_add_transpose(
 select_and_gather_add_p = standard_primitive(
     _select_and_gather_add_shape_rule, _input_dtype, 'select_and_gather_add',
     _select_and_gather_add_translation)
+ad.primitive_jvps[select_and_gather_add_p] = _select_and_gather_add_jvp
 ad.primitive_transposes[select_and_gather_add_p] = \
     _select_and_gather_add_transpose
 
@@ -3959,8 +4009,5 @@ def subvals(lst, replace):
 
 
 def _abstractify(x):
-  # abstractify wrapper used internally for primitives like while_loop
-  if isinstance(x, core.Tracer):
-    return pe.PartialVal((xla.abstractify(x.aval), core.unit))
-  else:
-    return pe.PartialVal((xla.abstractify(x), core.unit))
+  # used internally for initial-style higher-order primitives
+  return pe.PartialVal((raise_to_shaped(core.get_aval(x)), core.unit))

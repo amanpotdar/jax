@@ -456,6 +456,12 @@ mod = remainder
 fmod = _wraps(onp.fmod)(lambda x, y: lax.rem(x, y))
 
 
+@_wraps(onp.cbrt)
+def cbrt(x):
+  x, = _promote_to_result_dtype(onp.cbrt, x)
+  return lax.sign(x) * power(lax.abs(x), _constant_like(x, 1. / 3.))
+
+
 @_wraps(onp.sqrt)
 def sqrt(x):
   x, = _promote_to_result_dtype(onp.sqrt, x)
@@ -595,6 +601,32 @@ def angle(x):
     re = lax.convert_element_type(re, dtype)
     im = lax.convert_element_type(im, dtype)
   return lax.atan2(im, re)
+
+
+@_wraps(onp.diff)
+def diff(a, n=1, axis=-1,):
+  if not isinstance(a, ndarray) or a.ndim == 0:
+    return a
+  if n == 0:
+    return a
+  if n < 0:
+    raise ValueError(
+      "order must be non-negative but got " + repr(n))
+
+  nd = a.ndim
+
+  slice1 = [slice(None)] * nd
+  slice2 = [slice(None)] * nd
+  slice1[axis] = slice(1, None)
+  slice2[axis] = slice(None, -1)
+  slice1 = tuple(slice1)
+  slice2 = tuple(slice2)
+
+  op = not_equal if a.dtype == onp.bool_ else subtract
+  for _ in range(n):
+    a = op(a[slice1], a[slice2])
+
+  return a
 
 
 @_wraps(onp.isrealobj)
@@ -937,10 +969,9 @@ def mean(a, axis=None, dtype=None, out=None, keepdims=False):
     else:
       dtype = _dtype(a)
 
-  td = true_divide(
+  return lax.div(
       sum(a, axis, dtype=dtype, keepdims=keepdims),
       lax.convert_element_type(normalizer, dtype))
-  return lax.convert_element_type(td, dtype)
 
 
 @_wraps(onp.var)
@@ -1148,7 +1179,7 @@ def column_stack(tup):
 def atleast_1d(*arys):
   if len(arys) == 1:
     arr = array(arys[0])
-    return arr if arr.ndim >= 1 else arr.reshape(-1)
+    return arr if ndim(arr) >= 1 else reshape(arr, -1)
   else:
     return [atleast_1d(arr) for arr in arys]
 
@@ -1157,7 +1188,7 @@ def atleast_1d(*arys):
 def atleast_2d(*arys):
   if len(arys) == 1:
     arr = array(arys[0])
-    return arr if arr.ndim >= 2 else arr.reshape((1, -1))
+    return arr if ndim(arr) >= 2 else reshape(arr, (1, -1))
   else:
     return [atleast_2d(arr) for arr in arys]
 
@@ -1167,9 +1198,9 @@ def atleast_3d(*arys):
   if len(arys) == 1:
     arr = array(arys[0])
     if ndim(arr) <= 1:
-      arr = arr.reshape((1, -1, 1))
+      arr = reshape(arr, (1, -1, 1))
     elif ndim(arr) == 2:
-      arr = arr.reshape(shape(arr) + (1,))
+      arr = reshape(arr, shape(arr) + (1,))
     return arr
   else:
     return [atleast_3d(arr) for arr in arys]
@@ -1236,6 +1267,17 @@ def zeros(shape, dtype=onp.dtype("float64")):
 def ones(shape, dtype=onp.dtype("float64")):
   shape = (shape,) if onp.isscalar(shape) else shape
   return lax.full(shape, 1, dtype)
+
+
+@_wraps(onp.array_equal)
+def array_equal(a1, a2):
+  try:
+    a1, a2 = asarray(a1), asarray(a2)
+  except Exception:
+    return False
+  if a1.shape != a2.shape:
+    return False
+  return asarray(a1==a2).all()
 
 
 # We can't create uninitialized arrays in XLA; use zeros for empty.

@@ -4,6 +4,10 @@
 
 # JAX: Autograd and XLA [![Test status](https://travis-ci.org/google/jax.svg?branch=master)](https://travis-ci.org/google/jax)
 
+[**Reference docs**](https://jax.readthedocs.io/en/latest/)
+| [**Install guide**](#installation)
+| [**Quickstart**](#quickstart-colab-in-the-cloud)
+
 JAX is [Autograd](https://github.com/hips/autograd) and
 [XLA](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/g3doc/overview.md),
 brought together for high-performance machine learning research.
@@ -91,9 +95,13 @@ And for a deeper dive into JAX:
 - [MAML Tutorial with JAX](https://colab.research.google.com/github/google/jax/blob/master/notebooks/maml.ipynb).
 
 ## Installation
-JAX is written in pure Python, but it depends on XLA, which needs to be
-compiled and installed as the `jaxlib` package. Use the following instructions
-to build JAX from source or install a binary package with pip.
+JAX is written in pure Python, but it depends on XLA, which needs to be compiled
+and installed as the `jaxlib` package. Use the following instructions to build
+JAX from source or install a binary package with pip.
+
+We support installing or building `jaxlib` on Linux and macOS platforms, but not
+Windows. We're not currently working on Windows support, but contributions are
+welcome (see [#438](https://github.com/google/jax/issues/438)).
 
 ### Building JAX from source
 First, obtain the JAX source code, and make sure `scipy` is installed.
@@ -156,7 +164,7 @@ PYTHON_VERSION=cp27  # alternatives: cp27, cp35, cp36, cp37
 CUDA_VERSION=cuda92  # alternatives: cuda90, cuda92, cuda100
 PLATFORM=linux_x86_64  # alternatives: linux_x86_64
 BASE_URL='https://storage.googleapis.com/jax-wheels'
-pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.12-$PYTHON_VERSION-none-$PLATFORM.whl
+pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.13-$PYTHON_VERSION-none-$PLATFORM.whl
 
 pip install --upgrade jax  # install jax
 ```
@@ -177,23 +185,25 @@ for Python 2.7, 3.6, and 3.7; for anything else, you must build from source.
 
 ## Running the tests
 
-To run all the JAX tests, from the repository root directory run
+To run all the JAX tests, we recommend using `pytest-xdist`, which can run tests in
+parallel. First, install `pytest-xdist` by running `pip install pytest-xdist`.
+Then, from the repository root directory run
 
 ```bash
-nosetests tests
+pytest -n auto tests
 ```
 
 JAX generates test cases combinatorially, and you can control the number of
 cases that are generated and checked for each test (default 10):
 
 ```bash
-JAX_NUM_GENERATED_CASES=100 nosetests tests
+JAX_NUM_GENERATED_CASES=100 pytest -n auto tests
 ```
 
 You can run a more specific set of tests using
-[`nose`](https://nose.readthedocs.io/en/latest/usage.html)'s built-in selection
-mechanisms, or alternatively you can run a specific test file directly to see
-more detailed information about the cases being run:
+[`pytest`](https://docs.pytest.org/en/latest/usage.html#specifying-tests-selecting-tests)'s
+built-in selection mechanisms, or alternatively you can run a specific test
+file directly to see more detailed information about the cases being run:
 
 ```bash
 python tests/lax_numpy_test.py --num_generated_cases=5
@@ -718,8 +728,10 @@ For a survey of current gotchas, with examples and explanations, we highly recom
 
 Some stand-out gotchas that might surprise NumPy users:
 1. [`np.isnan` doesn't yet work](https://github.com/google/jax/issues/276), and in general nan semantics aren't preserved on some backends.
-1. In-place mutation of arrays isn't supported, though [there is an alternative](https://jax.readthedocs.io/en/latest/jax.ops.html). Generally JAX requires functional code.
-2. PRNGs are different and can be awkward, though for [good reasons](https://github.com/google/jax/blob/master/design_notes/prng.md), and non-reuse (linearity) is not yet checked.
+2. In-place mutation of arrays isn't supported, though [there is an alternative](https://jax.readthedocs.io/en/latest/jax.ops.html). Generally JAX requires functional code.
+3. JAX enforces single-precision numbers (32-bit or `float32`) by default and to use double-precision (64-bit or
+`float64`), one needs to set the `jax_enable_x64` variable **at startup** (set environment variable `JAX_ENABLE_x64 = True` or for other ways, see [here](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb#scrollTo=YTktlwTTMgFl))
+4. PRNGs are different and can be awkward, though for [good reasons](https://github.com/google/jax/blob/master/design_notes/prng.md), and non-reuse (linearity) is not yet checked.
 
 See [the notebook](https://colab.research.google.com/github/google/jax/blob/master/notebooks/Common_Gotchas_in_JAX.ipynb) for much more information.
 
