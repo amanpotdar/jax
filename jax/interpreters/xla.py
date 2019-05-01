@@ -136,9 +136,8 @@ def device_put(x, device_num=0):
   elif hasattr(x, '__array__'):
     return xb.device_put(x, device_num)  # handle arraylikes
   elif t is JaxTuple:
-    # TODO(mattjj, phawkins): for the JaxTuple case, this implementation can
-    # round-trip tuple elements already on the correct device; consider revising
-    return xb.device_put(x, device_num)
+    element_bufs = tuple(map(partial(device_put, device_num=device_num), x))
+    return xb.make_tuple(element_bufs, device_num)
   else:
     raise TypeError(t)
 

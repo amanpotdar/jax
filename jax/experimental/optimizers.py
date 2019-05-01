@@ -30,21 +30,16 @@ import jax.numpy as np
 from jax.core import pack
 from jax.util import partial, safe_zip, safe_map, unzip2
 from jax import tree_util
-from jax.tree_util import (tree_map, tree_mimomap, tree_structure,
-                           register_pytree_node, tree_map2)
+from jax.tree_util import tree_flatten, tree_unflatten, register_pytree_node
 
 map = safe_map
 zip = safe_zip
 
-OptimizerState = collections.namedtuple("OptimizerState", ["state"])
+OptimizerState = collections.namedtuple("OptimizerState",
+                                        ["packed_state", "tree", "subtrees"])
 register_pytree_node(OptimizerState,
-                     lambda xs: ((xs.state,), None),
-                     lambda _, xs: OptimizerState(xs[0]))
-
-def opt_tree_map(f, tree, *rest):
-  return tree_util.tree_multimap2({OptimizerState},
-                                  lambda *states: OptimizerState(f(*[s.state for s in states])),
-                                  tree, *rest)
+                     lambda xs: ((xs.packed_state,), (xs.tree, xs.subtrees)),
+                     lambda data, xs: OptimizerState(xs[0], data[0], data[1]))
 
 def optimizer(opt_maker):
   """Decorator to make an optimizer map over tuple/list/dict containers."""
@@ -54,28 +49,40 @@ def optimizer(opt_maker):
 
     @functools.wraps(init)
     def tree_init(x0_tree):
-      return tree_map(lambda x: OptimizerState(init(x)), x0_tree)
+      x0_flat, tree = tree_flatten(x0_tree)
+      initial_states = [init(x0) for x0 in x0_flat]
+      states_flat, subtrees = unzip2(map(tree_flatten, initial_states))
+      packed_state = pack(map(pack, states_flat))
+      return OptimizerState(packed_state, tree, subtrees)
 
     @functools.wraps(update)
-    def tree_update(i, grad_tree, state_tree):
-      return tree_util.tree_multimap2(
-          {OptimizerState},
-          lambda grad, state: OptimizerState(update(i, grad, state.state)),
-          grad_tree, state_tree)
+    def tree_update(i, grad_tree, opt_state):
+      packed_state, tree, subtrees = opt_state
+      grad_flat, tree2 = tree_flatten(grad_tree)
+      assert tree == tree2
+      states = map(tree_unflatten, subtrees, packed_state)
+      new_states = map(partial(update, i), grad_flat, states)
+      new_states_flat, subtrees2 = unzip2(map(tree_flatten, new_states))
+      for subtree, subtree2 in zip(subtrees, subtrees2):
+        if subtree != subtree2:
+          msg = ("optimizer update function produced an output structure that "
+                 "did not match its input structure: input {} and output {}.")
+          raise TypeError(msg.format(subtree, subtree2))
+      new_packed_state = pack(map(pack, new_states_flat))
+      return OptimizerState(new_packed_state, tree, subtrees)
 
     @functools.wraps(get_params)
-    def tree_get_params(state_tree):
-      return tree_map2({OptimizerState}, lambda state: get_params(state.state), state_tree)
+    def tree_get_params(opt_state):
+      packed_state, tree, subtrees = opt_state
+      states = map(tree_unflatten, subtrees, packed_state)
+      params = map(get_params, states)
+      return tree_unflatten(tree, params)
 
     return tree_init, tree_update, tree_get_params
   return tree_opt_maker
 
-# def iterate(state_trees):
-#   """Extract the current iterate from an optimizer state."""
-#   return state_trees[0]
-# get_params = iterate
 
-# optimizers
+### optimizers
 
 @optimizer
 def sgd(step_size):
@@ -182,7 +189,8 @@ def adam(step_size, b1=0.9, b2=0.999, eps=1e-8):
     return x
   return init, update, get_params
 
-# learning rate schedules
+
+### learning rate schedules
 
 def constant(step_size):
   def schedule(i):
