@@ -370,16 +370,15 @@ for t in array_types:
 
 
 class DeviceValue(object):
+  """A DeviceValue represents a value backed by device memory."""
   __slots__ = ["device_buffer"]
   def __init__(self, device_buffer):
     self.device_buffer = device_buffer
 
-  def to_py(self):
-    return self.device_buffer.to_py()
-
-
 class DeviceTuple(DeviceValue):
+  """A DeviceTuple is a JaxTuple backed by a single device memory buffer."""
   __slots__ = ["elt_xla_shapes", "elt_handlers"]
+
   def __init__(self, device_buffer):
     self.device_buffer = device_buffer
     self.elt_xla_shapes = device_buffer.shape().tuple_shapes()
@@ -393,8 +392,8 @@ class DeviceTuple(DeviceValue):
   def __len__(self):
     return len(self.elt_xla_shapes)
 
-  def to_py(self):
-    return core.JaxTuple(self.device_buffer.to_py())
+  def __repr__(self):
+    return 'DeviceTuple[{}]'.format(len(self.elt_xla_shapes))
 
 def _tuple_elt_handler(xla_shape):
   if xla_shape.is_tuple():
@@ -408,6 +407,8 @@ def abstractify_device_tuple(tup):
 
 core.pytype_aval_mappings[DeviceTuple] = AbstractTuple
 pytype_aval_mappings[DeviceTuple] = abstractify_device_tuple
+# DeviceValues don't need to be canonicalized because we assume values on the
+# device have already been canonicalized.
 canonicalize_dtype_handlers[DeviceTuple] = identity
 
 
@@ -416,6 +417,9 @@ def forward_method(attrname, self, fun, *args):
 forward_to_value = partial(forward_method, "_value")
 
 class DeviceArray(DeviceValue):
+  """A DeviceArray is an ndarray backed by a single device memory buffer."""
+  # We don't subclass ndarray because that would open up a host of issues,
+  # but lax_numpy.py overrides isinstance behavior and attaches ndarray methods.
   __slots__ = ["shape", "dtype", "ndim", "size", "_npy_value"]
   __array_priority__ = 100.
 
@@ -494,6 +498,8 @@ class DeviceArray(DeviceValue):
 
 core.pytype_aval_mappings[DeviceArray] = ConcreteArray
 pytype_aval_mappings[DeviceArray] = make_shaped_array
+# DeviceValues don't need to be canonicalized because we assume values on the
+# device have already been canonicalized.
 canonicalize_dtype_handlers[DeviceArray] = identity
 
 def _device_array_constant_handler(c, val, canonicalize_types=True):
