@@ -64,7 +64,7 @@ flags.DEFINE_bool("jax_disable_jit",
                   "Disable JIT compilation and just call original Python.")
 
 
-def jit(fun, static_argnums=(), device_values=True):
+def jit(fun, static_argnums=()):
   """Sets up `fun` for just-in-time compilation with XLA.
 
   Args:
@@ -82,8 +82,6 @@ def jit(fun, static_argnums=(), device_values=True):
       different values for these constants will trigger recompilation. If the
       jitted function is called with fewer positional arguments than indicated
       by `static_argnums` then an error is raised. Defaults to ().
-    device_values: A boolean specifying whether the jitted function should, when
-      called, return values backed by device memory (default True).
 
   Returns:
     A wrapped version of `fun`, set up for just-in-time compilation.
@@ -101,6 +99,9 @@ def jit(fun, static_argnums=(), device_values=True):
   [-0.54485154  0.27744263 -0.29255125 -0.91421586 -0.62452525 -0.2474813
    -0.8574326  -0.7823267   0.7682731   0.59566754]
   """
+  return _jit(fun, static_argnums)
+
+def _jit(fun, static_argnums, device_values=True):
   @wraps(fun)
   def f_jitted(*args, **kwargs):
     if _jit_is_disabled or config.read('jax_disable_jit'):
@@ -795,7 +796,7 @@ tree_to_pval_tuples = partial(process_pytree, pe.pack_pvals)
 
 
 device_put = jit(lambda x: x)
-device_get = jit(lambda x: x, device_values=False)
+device_get = _jit(lambda x: x, (), device_values=False)
 
 
 def _argnums_partial(f, dyn_argnums, args):
