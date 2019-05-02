@@ -394,6 +394,7 @@ class DeviceTuple(DeviceValue):
 
   def __repr__(self):
     return 'DeviceTuple[{}]'.format(len(self.elt_xla_shapes))
+core.tuple_types.add(DeviceTuple)
 
 def _tuple_elt_handler(xla_shape):
   if xla_shape.is_tuple():
