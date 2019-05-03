@@ -69,6 +69,10 @@ open](https://github.com/google/jax) by a growing number of
 [contributors](#contributors).
 
 ### Contents
+
+
+
+
 * [Quickstart: Colab in the Cloud](#quickstart-colab-in-the-cloud)
 * [Installation](#installation)
 * [Running the tests](#running-the-tests)
@@ -349,6 +353,7 @@ debugging but they may only be executed once if they're under a `jit` decorator.
 >     `x.astype(np.float64)` instead).
 >
 > **For jit functions, also don’t use**
+
 >
 > *   Control flow based on dynamic values `if x > 0: ...`. Control flow based
 >     on shapes is fine: `if x.shape[0] > 2: ...` and `for subarr in array`.
